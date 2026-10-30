@@ -1,0 +1,12 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+const registry = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432';
+const wallet = process.env.AGENT_ADDRESS;
+const uri = process.env.AGENT_URI || 'https://corridorproof.example/agent.json';
+if (!wallet) throw new Error('Set AGENT_ADDRESS to prepare registration calldata. This script never broadcasts.');
+const { encodeFunctionData } = await import('viem');
+const abi = [{ type: 'function', name: 'register', stateMutability: 'nonpayable', inputs: [{ name: 'agentURI', type: 'string' }], outputs: [{ name: 'agentId', type: 'uint256' }] }] as const;
+const data = encodeFunctionData({ abi, functionName: 'register', args: [uri] });
+const out = resolve('.data/erc8004-registration.json'); mkdirSync('.data', { recursive: true });
+writeFileSync(out, JSON.stringify({ chainId: 42220, registry, from: wallet, agentURI: uri, to: registry, data, broadcast: false, note: 'Prepared only. Review metadata and fund the agent wallet before manual execution.' }, null, 2));
+console.log(`Prepared unsigned ERC-8004 register(string) call at ${out}`);

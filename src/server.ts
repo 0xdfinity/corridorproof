@@ -1,0 +1,24 @@
+import 'dotenv/config';
+import express from 'express';
+import { generateKeyPairSync } from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { requestFirmQuote, previewQuote } from './textile.js';
+import { executeSwap } from './executor.js';
+import { makeReceipt, ReceiptStore, verifyReceipt } from './receipt.js';
+const app = express(); app.use(express.json({ limit: '2mb' }));
+app.use(express.static(resolve(process.cwd(), 'dist/client')));
+const store = new ReceiptStore();
+const signingKeyPath = resolve(process.env.RECEIPT_SIGNING_KEY || '.data/receipt-ed25519.pem'); mkdirSync(dirname(signingKeyPath), { recursive: true });
+if (!process.env.RECEIPT_PRIVATE_KEY_PEM) { try { readFileSync(signingKeyPath, 'utf8'); } catch { const pair = generateKeyPairSync('ed25519'); writeFileSync(signingKeyPath, pair.privateKey.export({ type: 'pkcs8', format: 'pem' })); } }
+const privateKey = process.env.RECEIPT_PRIVATE_KEY_PEM || readFileSync(signingKeyPath, 'utf8');
+app.get('/api/health', (_req, res) => res.json({ ok: true, chainId: 42220 }));
+app.get('/api/receipts', (_req, res) => res.json(store.list()));
+app.get('/api/receipts/:id', (req, res) => { const receipt = store.get(req.params.id); if (!receipt) return res.status(404).json({ error: 'receipt not found' }); res.json({ receipt, signatureValid: verifyReceipt(receipt) }); });
+app.post('/api/quote/preview', async (req, res) => { try { res.json(await previewQuote(req.body)); } catch (e) { res.status(502).json({ error: (e as Error).message }); } });
+app.post('/api/quote/firm', async (req, res) => { try { res.json(await requestFirmQuote(req.body)); } catch (e) { res.status(502).json({ error: (e as Error).message }); } });
+app.post('/api/settle/dry-run', async (req, res) => { try { res.json(await executeSwap(req.body.quote, undefined)); } catch (e) { res.status(400).json({ error: (e as Error).message }); } });
+app.post('/api/settle', async (req, res) => { try { res.json(await executeSwap(req.body.quote)); } catch (e) { res.status(400).json({ error: (e as Error).message }); } });
+app.post('/api/receipts', (req, res) => { try { const receipt = makeReceipt(req.body, privateKey); store.put(receipt); res.status(201).json({ receipt, signatureValid: verifyReceipt(receipt) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); } });
+app.post('/api/receipts/verify', (req, res) => res.json({ valid: verifyReceipt(req.body) }));
+const port = Number(process.env.PORT || 3000); app.listen(port, () => console.log(`CorridorProof listening on ${port}`));
