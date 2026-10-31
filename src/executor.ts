@@ -5,8 +5,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { toDataSuffix } from '@celo/attribution-tags';
 import type { Quote } from './receipt.js';
 export const CELO_CHAIN_ID = 42220;
-export const ATTRIBUTION_TAG = process.env.LOOPS_ATTRIBUTION_TAG || 'corridorproof_placeholder';
-export const ATTRIBUTION_IS_PLACEHOLDER = !process.env.LOOPS_ATTRIBUTION_TAG;
+export const ATTRIBUTION_TAG = process.env.LOOPS_ATTRIBUTION_TAG || 'celo_ae47e7a86a7b';
+export const ATTRIBUTION_IS_PLACEHOLDER = ATTRIBUTION_TAG === 'corridorproof_placeholder';
 const RPC_URL = process.env.CELO_RPC_URL || 'https://forno.celo.org';
 export function tagCalldata(data: Hex, code: string = ATTRIBUTION_TAG): Hex { return concat([data, toDataSuffix(code)]); }
 export function createExecutor(privateKey = process.env.AGENT_PRIVATE_KEY): { account: any; publicClient: any; walletClient: any } {

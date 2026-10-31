@@ -24,7 +24,7 @@ The integration uses Textile FX v2 at `https://api.textilecredit.com/v2`: `POST 
 
 Settlement uses viem on Celo mainnet (chain id `42220`, default RPC `https://forno.celo.org`). With no `AGENT_PRIVATE_KEY`, `/api/settle` returns a dry-run transaction envelope and does not broadcast. To enable broadcast, set `AGENT_PRIVATE_KEY` only in a private environment. The executor rejects other chain IDs and expired quotes.
 
-Every swap's calldata is suffixed with Celo's ERC-8021 attribution encoding via `@celo/attribution-tags`. `LOOPS_ATTRIBUTION_TAG` defaults to the conspicuously unassigned `corridorproof_placeholder`. Enroll at Loops House and set the issued code before sending any transaction you expect to be credited. Placeholder activity is not credited to your enrollment, and tags cannot be backfilled. Replace it with the exact issued code; do not derive a substitute.
+Every swap's calldata is suffixed with Celo's ERC-8021 attribution encoding via `@celo/attribution-tags`. The enrolled Loops House attribution tag is `celo_ae47e7a86a7b`, configured as `LOOPS_ATTRIBUTION_TAG` in `.env`. `corridorproof_placeholder` is the reusable unassigned pattern for future projects until they receive their own enrollment code. Placeholder activity is not credited to an enrollment, and tags cannot be backfilled. Always replace the placeholder with the exact issued code; do not derive a substitute.
 
 Approvals are intentionally not executed by the current executor. Check Textile's approval transaction and allowance before live swap use; a quote that needs approval must be handled separately without crossing `expiresAt`.
 
