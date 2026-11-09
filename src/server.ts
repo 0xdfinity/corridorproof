@@ -7,7 +7,7 @@ import { requestFirmQuote, previewQuote } from './textile.js';
 import { executeSwap } from './executor.js';
 import { makeReceipt, ReceiptStore, verifyReceipt } from './receipt.js';
 const app = express(); app.use(express.json({ limit: '2mb' }));
-app.use(express.static(resolve(process.cwd(), 'dist/client')));
+app.use(express.static(resolve(process.cwd(), 'dist')));
 const store = new ReceiptStore();
 const signingKeyPath = resolve(process.env.RECEIPT_SIGNING_KEY || '.data/receipt-ed25519.pem'); mkdirSync(dirname(signingKeyPath), { recursive: true });
 if (!process.env.RECEIPT_PRIVATE_KEY_PEM) { try { readFileSync(signingKeyPath, 'utf8'); } catch { const pair = generateKeyPairSync('ed25519'); writeFileSync(signingKeyPath, pair.privateKey.export({ type: 'pkcs8', format: 'pem' })); } }

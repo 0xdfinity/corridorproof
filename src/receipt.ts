@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import Database = require('better-sqlite3');
+import Database from 'better-sqlite3';
 import { createHash, createPrivateKey, createPublicKey, sign, verify, randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
