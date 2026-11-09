@@ -1,1 +1,127 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CorridorProof</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"></head><body><div id="app"></div><script type="module" src="/src/main.ts"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CorridorProof — quote-versus-fill receipts for FX agents on Celo</title>
+<meta name="description" content="Pull a live Textile RFQ quote on Celo, record the fill you observed, and issue an Ed25519-signed quote-versus-fill receipt anyone can verify independently.">
+<meta name="theme-color" content="#0b1016">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d141d'/%3E%3Cpath d='M16 5l8 3v7.5c0 4.6-3.3 8.4-8 9.5-4.7-1.1-8-4.9-8-9.5V8l8-3z' fill='none' stroke='%2337d99a' stroke-width='2'/%3E%3Cpath d='M11.5 16.5l3 3 6-6.5' fill='none' stroke='%2337d99a' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="canonical" href="https://corridorproof.vercel.app/">
+</head>
+<body>
+<a class="skip" href="#corridor">Skip to the corridor desk</a>
+
+<header class="topbar">
+  <div class="mark" aria-hidden="true"></div>
+  <div class="wordmark">CorridorProof<span>quote-versus-fill receipts</span></div>
+  <dl class="status" id="status" aria-label="Service status">
+    <div><dt>Network</dt><dd id="s-network">—</dd></div>
+    <div><dt>RFQ</dt><dd id="s-rfq">—</dd></div>
+    <div><dt>Settlement</dt><dd id="s-settle">—</dd></div>
+    <div><dt>Attribution</dt><dd id="s-tag">—</dd></div>
+  </dl>
+</header>
+
+<main>
+  <section class="lede">
+    <h1>An FX quote is a promise. This is the receipt.</h1>
+    <p>Pull a live Textile RFQ price on Celo, record the fill your agent actually received, and CorridorProof signs a portable
+      receipt that compares the two: rate drift, adverse slippage against your own limit, the maker route, and whether the
+      settlement landed inside the quote window. Verification is a public-key operation, so nobody has to trust this site.</p>
+  </section>
+
+  <section id="corridor" class="panel">
+    <h2><span class="step">1</span>Check the corridor</h2>
+    <p class="note">Corridors and contract addresses are taken from <a href="https://docs.textilecredit.com/protocol/address-book.html" rel="noopener noreferrer" target="_blank">the Textile FX address book</a> for chain 42220. Prices come from Textile when you ask, never from a cached table.</p>
+    <form class="grid" id="preview-form">
+      <label class="grow">Corridor
+        <select id="p-corridor"></select>
+      </label>
+      <label>Amount
+        <input id="p-amount" inputmode="decimal" value="1000" autocomplete="off" aria-describedby="p-amount-hint">
+        <span class="hint" id="p-amount-hint">In whole tokens of the side you are selling.</span>
+      </label>
+      <button class="primary" type="submit" id="p-go">Check price</button>
+    </form>
+    <div class="slot" id="preview-out" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="step">2</span>Lock a firm quote</h2>
+    <p class="note">Firm quotes bind an amount, an expiry and executable calldata. This deployment needs a Textile API key to request one.</p>
+    <form class="grid" id="firm-form">
+      <label>Taker wallet
+        <input id="f-taker" placeholder="0x…" spellcheck="false" autocomplete="off" required>
+      </label>
+      <label>Direction
+        <select id="f-side"><option value="sellAmount">Selling the first token</option><option value="buyAmount">Buying the second token</option></select>
+      </label>
+      <button class="primary" type="submit" id="f-go">Request firm quote</button>
+    </form>
+    <div class="slot" id="firm-out" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="step">3</span>Record what settled</h2>
+    <p class="note">Both legs in base units. Quoted figures come from your RFQ response (or step 1); filled figures are what your agent actually received. CorridorProof never supplies them.</p>
+    <form class="grid" id="receipt-form">
+      <label>Quoted out<input id="q-out" placeholder="base units" autocomplete="off" required></label>
+      <label>Quoted in<input id="q-in" placeholder="base units" autocomplete="off" required></label>
+      <label>Quote expires<input id="q-exp" type="datetime-local" required></label>
+      <label class="grow">Settlement hash<input id="r-tx" placeholder="0x…" spellcheck="false" autocomplete="off" required></label>
+      <label>Settled at<input id="r-at" type="datetime-local" required></label>
+      <label>Filled out<input id="f-out" placeholder="base units" autocomplete="off" required></label>
+      <label>Filled in<input id="f-in" placeholder="base units" autocomplete="off" required></label>
+      <label>Slippage limit (bps)<input id="r-limit" inputmode="numeric" value="100" autocomplete="off"></label>
+      <label class="grow">Maker route, if known<input id="r-route" placeholder="comma-separated, blank to match the quote" autocomplete="off"></label>
+      <button class="primary" type="submit" id="r-go">Issue signed receipt</button>
+    </form>
+    <div class="slot" id="receipt-out" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="step">4</span>Prove the attribution tag</h2>
+    <p class="note">Every transaction this service builds carries the enrollment code as an ERC-8021 suffix. Paste any Celo hash to read it back from the chain.</p>
+    <form class="grid" id="tag-form">
+      <label class="grow">Transaction hash
+        <input id="t-tx" placeholder="0x…" spellcheck="false" autocomplete="off" required>
+      </label>
+      <button class="primary" type="submit" id="t-go">Read tags on chain</button>
+    </form>
+    <div class="slot" id="tag-out" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="step">5</span>Verify any receipt</h2>
+    <p class="note">Paste a receipt from anywhere — including one you exported here — and the signature is checked against the key embedded in it.</p>
+    <form class="grid" id="verify-form">
+      <label class="full">Receipt JSON
+        <textarea id="v-json" rows="6" spellcheck="false" placeholder='{"id": … }' required></textarea>
+      </label>
+      <button class="primary" type="submit" id="v-go">Verify signature</button>
+      <button class="ghost" type="button" id="v-load">Load one of mine</button>
+    </form>
+    <div class="slot" id="verify-out" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="step">6</span>Journal</h2>
+    <p class="note" id="journal-note">Receipts issued here are listed below.</p>
+    <div class="slot" id="journal" hidden></div>
+  </section>
+</main>
+
+<footer>
+  <p>CorridorProof settles on Celo mainnet only. It holds no custody, publishes no agent metadata, and treats a receipt as
+    proof of a signed record — not proof that funds moved. Self-hosted deployments keep journals in SQLite.</p>
+  <p><a href="https://github.com/0xdfinity/corridorproof" rel="noopener noreferrer" target="_blank">Source</a> ·
+     <a href="https://celoscan.io" rel="noopener noreferrer" target="_blank">Celo scanner</a></p>
+</footer>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

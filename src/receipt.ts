@@ -1,8 +1,5 @@
 import 'dotenv/config';
-import Database from 'better-sqlite3';
 import { createHash, createPrivateKey, createPublicKey, sign, verify, randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 
 export type Quote = { rfqId: string; status: string; quote: { sellAmount: string; buyAmount: string; takerPays?: string; rateRay?: string; expiresAt: string; taker?: string; orders?: Array<{ maker?: string }> }; routing?: Record<string, unknown>; transactions: { swap: { to: `0x${string}`; data: `0x${string}`; value: string; chainId: number } } };
 export type Settlement = { txHash: `0x${string}`; settledAt: string; sellAmount: string; buyAmount: string; rateRay?: string; route?: string[]; blockNumber?: string };
@@ -26,10 +23,3 @@ export function makeReceipt({ quote, settlement, slippageBpsLimit = 100 }: Recei
   return { ...body, signature: { algorithm: 'ed25519', publicKey: pub, value: sign(null, Buffer.from(payload), priv).toString('base64'), payloadHash: createHash('sha256').update(payload).digest('hex') } };
 }
 export function verifyReceipt(receipt: Receipt): boolean { try { const { signature, ...body } = receipt, payload = JSON.stringify(body); return createHash('sha256').update(payload).digest('hex') === signature.payloadHash && verify(null, Buffer.from(payload), createPublicKey(signature.publicKey), Buffer.from(signature.value, 'base64')); } catch { return false; } }
-export class ReceiptStore {
-  private db: Database.Database; private jsonPath: string;
-  constructor(filename = process.env.RECEIPT_DB || '.data/receipts.sqlite') { const path = resolve(filename); mkdirSync(dirname(path), { recursive: true }); this.jsonPath = path.replace(/\.sqlite$/, '.jsonl'); this.db = new Database(path); this.db.exec('CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, tx_hash TEXT NOT NULL, payload TEXT NOT NULL)'); }
-  put(receipt: Receipt) { const payload = JSON.stringify(receipt); this.db.prepare('INSERT OR REPLACE INTO receipts VALUES (?, ?, ?, ?)').run(receipt.id, receipt.createdAt, receipt.txHash, payload); appendFileSync(this.jsonPath, payload + '\n'); }
-  get(id: string): Receipt | null { const row = this.db.prepare('SELECT payload FROM receipts WHERE id=? OR tx_hash=?').get(id, id) as { payload: string } | undefined; return row ? JSON.parse(row.payload) : null; }
-  list(limit = 50): Receipt[] { return this.db.prepare('SELECT payload FROM receipts ORDER BY created_at DESC LIMIT ?').all(limit).map((r: any) => JSON.parse(r.payload)); }
-}
