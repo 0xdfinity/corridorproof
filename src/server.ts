@@ -15,6 +15,8 @@ const via = (action: string, pick: (req: express.Request) => unknown = (req) => 
   };
 
 app.get('/api/health', via('health'));
+app.post('/api/settlement/observe', via('settlement.observe'));
+app.post('/api/pricing/quote', via('pricing.quote'));
 app.get('/api/receipts', via('receipt.list'));
 app.get('/api/receipts/:id', via('receipt.get', (req) => ({ id: req.params.id })));
 app.post('/api/receipts/verify', via('receipt.verify'));

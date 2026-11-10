@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CorridorProof — quote-versus-fill receipts for FX agents on Celo</title>
-<meta name="description" content="Pull a live Textile RFQ quote on Celo, record the fill you observed, and issue an Ed25519-signed quote-versus-fill receipt anyone can verify independently.">
+<meta name="description" content="Live Textile FX pricing on Celo, a two-sided maker book with inventory skew, and Ed25519-signed quote-versus-fill receipts verified from chain data.">
 <meta name="theme-color" content="#0b1016">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d141d'/%3E%3Cpath d='M16 5l8 3v7.5c0 4.6-3.3 8.4-8 9.5-4.7-1.1-8-4.9-8-9.5V8l8-3z' fill='none' stroke='%2337d99a' stroke-width='2'/%3E%3Cpath d='M11.5 16.5l3 3 6-6.5' fill='none' stroke='%2337d99a' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -29,14 +29,15 @@
 <main>
   <section class="lede">
     <h1>An FX quote is a promise. This is the receipt.</h1>
-    <p>Pull a live Textile RFQ price on Celo, record the fill your agent actually received, and CorridorProof signs a portable
-      receipt that compares the two: rate drift, adverse slippage against your own limit, the maker route, and whether the
-      settlement landed inside the quote window. Verification is a public-key operation, so nobody has to trust this site.</p>
+    <p>Pull a live Textile RFQ price on Celo, price your own two-sided book against it, record the fill from the chain rather
+      than from memory, and CorridorProof signs a portable receipt that compares quoted and settled: rate drift, adverse
+      slippage against your limit, maker route, and whether settlement landed inside the window. Verification is a public-key
+      operation, so nobody has to trust this site.</p>
   </section>
 
   <section id="corridor" class="panel">
     <h2><span class="step">1</span>Check the corridor</h2>
-    <p class="note">Corridors and contract addresses are taken from <a href="https://docs.textilecredit.com/protocol/address-book.html" rel="noopener noreferrer" target="_blank">the Textile FX address book</a> for chain 42220. Prices come from Textile when you ask, never from a cached table.</p>
+    <p class="note">Corridors and contract addresses come from <a href="https://docs.textilecredit.com/protocol/address-book.html" rel="noopener noreferrer" target="_blank">the Textile FX address book</a> for chain 42220. Prices are read when you ask, never from a cached table.</p>
     <form class="grid" id="preview-form">
       <label class="grow">Corridor
         <select id="p-corridor"></select>
@@ -51,10 +52,24 @@
   </section>
 
   <section class="panel">
-    <h2><span class="step">2</span>Lock a firm quote</h2>
-    <p class="note">Firm quotes bind an amount, an expiry and executable calldata. This deployment needs a Textile API key to request one.</p>
+    <h2><span class="step">2</span>Price your own book</h2>
+    <p class="note">A two-sided quote from the mid Textile just showed you: half-spread, then inventory skew, then exposure caps. Every step is printed so the number can be argued with.</p>
+    <form class="grid" id="pricing-form">
+      <label>Spread (bps)<input id="d-spread" inputmode="numeric" value="20" autocomplete="off"></label>
+      <label>Skew (bps at full scale)<input id="d-skew" inputmode="numeric" value="10" autocomplete="off"></label>
+      <label>Base held<input id="d-inventory-base" inputmode="numeric" value="600" autocomplete="off"></label>
+      <label>Quote held<input id="d-inventory-quote" inputmode="numeric" value="1200" autocomplete="off"></label>
+      <label class="grow">Order size<input id="d-size" inputmode="numeric" value="100" autocomplete="off"></label>
+      <button class="primary" type="submit" id="d-go">Quote both sides</button>
+    </form>
+    <div class="slot" id="pricing-out" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2><span class="step">3</span>Lock a firm quote</h2>
+    <p class="note">Firm quotes bind an amount, an expiry and executable calldata. This deployment holds no Textile key, so it reports what Textile answers instead of inventing a quote.</p>
     <form class="grid" id="firm-form">
-      <label>Taker wallet
+      <label class="grow">Taker wallet
         <input id="f-taker" placeholder="0x…" spellcheck="false" autocomplete="off" required>
       </label>
       <label>Direction
@@ -66,26 +81,35 @@
   </section>
 
   <section class="panel">
-    <h2><span class="step">3</span>Record what settled</h2>
-    <p class="note">Both legs in base units. Quoted figures come from your RFQ response (or step 1); filled figures are what your agent actually received. CorridorProof never supplies them.</p>
-    <form class="grid" id="receipt-form">
-      <label>Quoted out<input id="q-out" placeholder="base units" autocomplete="off" required></label>
-      <label>Quoted in<input id="q-in" placeholder="base units" autocomplete="off" required></label>
-      <label>Quote expires<input id="q-exp" type="datetime-local" required></label>
-      <label class="grow">Settlement hash<input id="r-tx" placeholder="0x…" spellcheck="false" autocomplete="off" required></label>
-      <label>Settled at<input id="r-at" type="datetime-local" required></label>
-      <label>Filled out<input id="f-out" placeholder="base units" autocomplete="off" required></label>
-      <label>Filled in<input id="f-in" placeholder="base units" autocomplete="off" required></label>
+    <h2><span class="step">4</span>Record what settled</h2>
+    <p class="note">Reading from the chain pulls the transfer amounts out of the transaction logs and refuses anything that is not a corridor fill. Hand-recorded figures are signed as claims, and the receipt says which it is.</p>
+    <form class="grid" id="ledger-form">
+      <label class="grow">Fill source
+        <select id="s-mode"><option value="chain">Read the amounts from chain</option><option value="declared">Record them by hand</option></select>
+      </label>
+      <label class="grow">Settlement hash
+        <input id="r-tx" placeholder="0x…" spellcheck="false" autocomplete="off" required>
+      </label>
+      <label class="grow full" id="taker-row">Taker that received the fill
+        <input id="s-taker" placeholder="0x…" spellcheck="false" autocomplete="off">
+      </label>
+      <label>Quoted out<input id="q-out" placeholder="base units" autocomplete="off"></label>
+      <label>Quoted in<input id="q-in" placeholder="base units" autocomplete="off"></label>
+      <label>Quote expires<input id="q-exp" type="datetime-local"></label>
+      <label class="chain-only" hidden>Filled out<input id="f-out" placeholder="read from chain" autocomplete="off" readonly></label>
+      <label class="chain-only" hidden>Filled in<input id="f-in" placeholder="read from chain" autocomplete="off" readonly></label>
+      <label class="declared-only">Filled out<input id="f-out-manual" placeholder="base units" autocomplete="off"></label>
+      <label class="declared-only">Filled in<input id="f-in-manual" placeholder="base units" autocomplete="off"></label>
+      <label class="declared-only">Settled at<input id="r-at" type="datetime-local"></label>
       <label>Slippage limit (bps)<input id="r-limit" inputmode="numeric" value="100" autocomplete="off"></label>
-      <label class="grow">Maker route, if known<input id="r-route" placeholder="comma-separated, blank to match the quote" autocomplete="off"></label>
       <button class="primary" type="submit" id="r-go">Issue signed receipt</button>
     </form>
     <div class="slot" id="receipt-out" hidden></div>
   </section>
 
   <section class="panel">
-    <h2><span class="step">4</span>Prove the attribution tag</h2>
-    <p class="note">Every transaction this service builds carries the enrollment code as an ERC-8021 suffix. Paste any Celo hash to read it back from the chain.</p>
+    <h2><span class="step">5</span>Prove the attribution tag</h2>
+    <p class="note">Every transaction this service builds carries the enrollment code as an ERC-8021 suffix. Paste any Celo hash to read the codes back from the chain.</p>
     <form class="grid" id="tag-form">
       <label class="grow">Transaction hash
         <input id="t-tx" placeholder="0x…" spellcheck="false" autocomplete="off" required>
@@ -96,8 +120,8 @@
   </section>
 
   <section class="panel">
-    <h2><span class="step">5</span>Verify any receipt</h2>
-    <p class="note">Paste a receipt from anywhere — including one you exported here — and the signature is checked against the key embedded in it.</p>
+    <h2><span class="step">6</span>Verify any receipt</h2>
+    <p class="note">Paste a receipt from anywhere — including one exported here — and the signature is checked against the key embedded in it.</p>
     <form class="grid" id="verify-form">
       <label class="full">Receipt JSON
         <textarea id="v-json" rows="6" spellcheck="false" placeholder='{"id": … }' required></textarea>
@@ -109,15 +133,17 @@
   </section>
 
   <section class="panel">
-    <h2><span class="step">6</span>Journal</h2>
+    <h2><span class="step">7</span>Journal</h2>
     <p class="note" id="journal-note">Receipts issued here are listed below.</p>
+    <div class="metrics" id="metrics" hidden></div>
     <div class="slot" id="journal" hidden></div>
   </section>
 </main>
 
 <footer>
-  <p>CorridorProof settles on Celo mainnet only. It holds no custody, publishes no agent metadata, and treats a receipt as
-    proof of a signed record — not proof that funds moved. Self-hosted deployments keep journals in SQLite.</p>
+  <p>CorridorProof settles on Celo mainnet only. It holds no custody, publishes no agent identity, and treats a receipt as
+    proof of a signed record — not proof that funds moved. Broadcast is not armed on this deployment. Self-hosted
+    deployments keep journals in SQLite.</p>
   <p><a href="https://github.com/0xdfinity/corridorproof" rel="noopener noreferrer" target="_blank">Source</a> ·
      <a href="https://celoscan.io" rel="noopener noreferrer" target="_blank">Celo scanner</a></p>
 </footer>

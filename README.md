@@ -1,6 +1,6 @@
 # CorridorProof
 
-CorridorProof turns a Textile FX quote and the fill your agent actually received into one signed, portable receipt that shows the drift between them. It is an audit layer for FX agents on Celo, not a swap venue.
+CorridorProof turns a Textile FX quote and the fill your agent received into one signed, portable receipt that shows the drift between them. It audits FX agents on Celo, not a swap venue.
 
 Live product: https://corridorproof.vercel.app
 
@@ -10,7 +10,7 @@ Live product: https://corridorproof.vercel.app
 - Quote windows, maker routes and slippage limits are enforced by whoever issued the quote, so the counterparty grades its own work.
 - ERC-8021 attribution cannot be added after the fact, so an app that does not tag from its first transaction never can.
 
-## Solution
+## Solution: how it works
 
 CorridorProof reads the quote, records the settlement you observed, and signs the comparison with Ed25519. Each receipt carries its own public key and a SHA-256 payload hash, so verifying it is a public-key operation that needs nothing from this service.
 
@@ -21,11 +21,23 @@ CorridorProof reads the quote, records the settlement you observed, and signs th
 
 ## See it working
 
-The deployed product requests live indicative pricing from Textile on Celo mainnet, issues receipts, and verifies signatures and attribution independently.
+Live product: https://corridorproof.vercel.app
 
-- Corridor desk: https://corridorproof.vercel.app — choose a corridor, get a live price, carry it into the ledger.
-- Service reads: `GET /api/health` reports chain, attribution code, settlement mode and journal type.
-- Receipts: `POST /api/receipts` returns a signed receipt; `POST /api/receipts/verify` checks any receipt against the key embedded inside it.
+Choose a corridor and the desk reads an indicative price from Textile on Celo mainnet, then carries the quoted legs into the ledger.
+
+![Corridor desk returning a live Textile quote](docs/screenshots/corridor-live.png)
+
+Issue a fill and CorridorProof signs a receipt that compares it against the quote: rate drift, adverse slippage against your limit, expiry, route, and how the amounts were sourced.
+
+![Signed receipt comparing quote to fill, with checks](docs/screenshots/receipt-verified.png)
+
+The same flow runs at phone width.
+
+![Corridor desk on mobile](docs/screenshots/mobile-desk.png)
+
+- Pricing desk: `POST /api/pricing/quote` returns two-sided prices and the decision trace behind each.
+- Chain reads: `POST /api/settlement/observe` decodes the transfer logs of a fill; a receipt created with `observe` marks its amounts as chain-sourced.
+- Service reads: `GET /api/health` reports chain, attribution code, settlement mode, journal type and journal metrics.
 - Attribution: `POST /api/attribution/read` returns the ERC-8021 codes present on a Celo transaction hash.
 
 ## Tech stack
@@ -43,9 +55,9 @@ The deployed product requests live indicative pricing from Textile on Celo mainn
 
 ## Architecture
 
-`src/handlers.ts` holds every route's logic and validation. `src/server.ts` wraps it in Express for self-hosting; `api/*.ts` are thin Vercel functions that call the same handlers, so the two deployments cannot drift apart. `src/journal.ts` selects SQLite or JSONL by environment, and `better-sqlite3` is an optional dependency so a missing native build cannot break a hosted deploy.
+`src/handlers.ts` holds every route's logic and validation. `src/server.ts` wraps it in Express for self-hosting; twelve `api/*.ts` functions are thin Vercel handlers that call the same actions, so the two deployments cannot drift apart. `src/pricing.ts` computes two-sided desk prices over 1e27 fixed-point rates, `src/pnl.ts` turns fills into realized P&L against a constant-spread baseline, and `src/chain.ts` decodes the ERC-20 transfer logs of a fill. `src/journal.ts` selects SQLite or JSONL by environment, and `better-sqlite3` is an optional dependency so a missing native build cannot break a hosted deploy.
 
-Corridors and token metadata in the client come from the Textile FX address book for chain 42220. A pair that is not enabled there is reported as unavailable rather than estimated.
+Corridors and token metadata in the client come from the Textile FX address book for chain 42220. A pair that is not enabled there, or has no makers online, is reported as unavailable rather than estimated.
 
 ## Settlement safety
 
@@ -60,11 +72,11 @@ Every outbound payload ends with the enrollment suffix, and `assertBroadcastAllo
 ## Key features
 
 - Live Textile corridor pricing with network fee and quoted depth, read at request time.
+- Two-sided desk pricing with a per-step decision trace, priced against the live mid.
 - Quote-versus-fill receipts covering rate drift, adverse slippage, expiry and route.
-- Ed25519 signatures verifiable offline by anyone holding the receipt.
-- Attribution suffix on all built calldata, plus a chain-side tag reader.
-- Prepared ERC-8004 registration transaction, never signed or broadcast for you.
-- One handler set behind both Express and serverless.
+- Provenance on every receipt — amounts read from chain transfer logs or recorded by hand.
+- Ed25519 signatures and the attribution tag reader, both verifiable without this service.
+- One handler set behind Express and twelve per-route Vercel functions.
 
 ## Quick start
 
@@ -121,7 +133,7 @@ This writes an unsigned `register(string agentURI)` call for the Celo Identity R
 
 ## What this is not
 
-CorridorProof is a taker-side audit layer. It requests quotes, settles them when an operator arms a wallet, and proves what happened. It does not answer RFQ solicitations, post two-sided prices, or hold maker inventory, and it reports no maker-side P&L or fill volume because it does not generate any. The settlement observation you record must itself be trustworthy; a receipt proves a signed record is intact and self-consistent, not that funds moved. This code is unaudited and holds no custody.
+CorridorProof is a taker-side audit layer. It requests quotes, settles them when an operator arms a wallet, and proves what happened. It does not publish prices to the RFQ market, answer solicitations, or hold maker inventory. The pricing desk computes a two-sided book locally so you can audit a decision; it is not wired to a maker feed and places no orders. It reports no maker-side P&L or fill volume because it generates none. The settlement observation you record must itself be trustworthy; a receipt proves a signed record is intact and self-consistent, not that funds moved. This code is unaudited and holds no custody.
 
 ## License
 

@@ -5,6 +5,8 @@ import { previewQuote, requestFirmQuote } from "./textile.js";
 import { executeSwap, readAttribution, sendAttributedTransfer, ATTRIBUTION_IS_PLACEHOLDER, ATTRIBUTION_TAG, CELO_CHAIN_ID } from "./executor.js";
 import { makeReceipt, verifyReceipt, type Receipt } from "./receipt.js";
 import { openJournal, type Journal } from "./journal.js";
+import { observeSettlement } from "./chain.js";
+import { quote as priceTheDesk, type PricingConfig } from "./pricing.js";
 
 export type Reply = { status: number; body: unknown };
 
@@ -126,14 +128,29 @@ export async function handle(action: string, payload: any = {}, headers: Record<
     switch (action) {
       case "health": {
         const store = await journal();
+        const receipts = store.list(500);
+        const verified = receipts.filter((r) => r.comparison.verified).length;
+        const fromChain = receipts.filter((r) => r.provenance?.source === "chain").length;
+        const drift = receipts.map((r) => r.comparison.rateDeltaBps).filter((v): v is number => v !== null);
         return ok({
           ok: true,
           chainId: CELO_CHAIN_ID,
           attributionTag: ATTRIBUTION_TAG,
           attributionCredited: !ATTRIBUTION_IS_PLACEHOLDER,
-          settlement: process.env.AGENT_PRIVATE_KEY ? "enabled" : "dry-run",
-          rfq: process.env.TEXTILE_API_KEY ? "enabled" : "preview-only",
+          settlement: process.env.AGENT_PRIVATE_KEY ? "armed" : "not armed",
+          rfq: process.env.TEXTILE_API_KEY ? "enabled" : "preview only",
           persistence: store.persistence,
+          // Counted from the receipt journal. Maker volume is absent because this
+          // service does not answer RFQ solicitations.
+          metrics: {
+            receipts: receipts.length,
+            verified,
+            flagged: receipts.length - verified,
+            chainSourced: fromChain,
+            declared: receipts.length - fromChain,
+            slippageBreaches: receipts.filter((r) => r.comparison.flags.includes("slippage-exceeded")).length,
+            meanRateDriftBps: drift.length ? Math.round((drift.reduce((a, b) => a + b, 0) / drift.length) * 100) / 100 : null,
+          },
         });
       }
       case "quote.preview": {
@@ -178,6 +195,39 @@ export async function handle(action: string, payload: any = {}, headers: Record<
         const proof = await readAttribution(result.txHash);
         return ok({ ...result, proof });
       }
+      case "settlement.observe": {
+        if (!hash(payload?.txHash) || payload.txHash.length !== 66) return bad("txHash must be a 66-character Celo transaction hash.");
+        if (!address(payload?.taker)) return bad("taker must be the wallet that received the fill.");
+        if (!address(payload?.sellToken) || !address(payload?.buyToken)) return bad("Both corridor token addresses are required.");
+        return ok(await observeSettlement({ txHash: payload.txHash, taker: payload.taker, sellToken: payload.sellToken, buyToken: payload.buyToken }));
+      }
+      case "pricing.quote": {
+        const mid = payload?.midRay;
+        if (!amount(mid)) return bad("midRay must be a decimal integer in 1e27 fixed point.");
+        const size = payload?.size;
+        if (!amount(size)) return bad("size must be a decimal integer of base units.");
+        const spreadBps = Number(payload?.spreadBps ?? 20);
+        if (!Number.isFinite(spreadBps) || spreadBps < 0 || spreadBps > 2_000) return bad("spreadBps must be between 0 and 2000.");
+        const config: PricingConfig = {
+          spreadBps,
+          maxBaseExposure: BigInt(amount(payload?.maxBaseExposure) ? payload.maxBaseExposure : "1000000000"),
+          maxQuoteExposure: BigInt(amount(payload?.maxQuoteExposure) ? payload.maxQuoteExposure : "10000000000"),
+          skewBpsPerFullScale: Number(payload?.skewBpsPerFullScale ?? 10),
+        };
+        const sides = (["sell", "buy"] as const).map((side) => {
+          const decision = priceTheDesk({
+            side,
+            size: BigInt(size),
+            midRay: BigInt(mid),
+            inventoryBase: BigInt(amount(payload?.inventoryBase) ? payload.inventoryBase : "0"),
+            inventoryQuote: BigInt(amount(payload?.inventoryQuote) ? payload.inventoryQuote : "0"),
+            config,
+          });
+          // Rates are BigInt internally; the wire format is decimal strings so JSON can carry them.
+          return { ...decision, priceRay: decision.priceRay.toString(), size: decision.size.toString(), midRay: decision.midRay.toString() };
+        });
+        return ok({ config: { ...config, maxBaseExposure: config.maxBaseExposure.toString(), maxQuoteExposure: config.maxQuoteExposure.toString() }, quotes: sides });
+      }
       case "receipt.list": {
         const store = await journal();
         return ok({ receipts: store.list(), persistence: store.persistence });
@@ -190,7 +240,23 @@ export async function handle(action: string, payload: any = {}, headers: Record<
       case "receipt.create": {
         const invalid = assertQuotable(payload?.quote);
         if (invalid) return bad(invalid);
-        const s = payload.settlement;
+        let s = payload.settlement;
+        let provenance: { source: "chain" | "declared"; tagVerified: boolean } = { source: "declared", tagVerified: false };
+        if (payload.observe) {
+          // Chain-derived fills: the amounts are read from transfer logs, not typed in.
+          if (!address(payload.observe.taker) || !address(payload.observe.sellToken) || !address(payload.observe.buyToken) || !hash(payload.observe.txHash)) {
+            return bad("A chain-observed receipt needs txHash, taker, sellToken and buyToken addresses.");
+          }
+          const observed = await observeSettlement({
+            txHash: payload.observe.txHash,
+            taker: payload.observe.taker,
+            sellToken: payload.observe.sellToken,
+            buyToken: payload.observe.buyToken,
+          });
+          if (!observed.verified) return bad(`Chain read rejected this as a fill: ${observed.reasons.join("; ")}`);
+          s = { txHash: observed.txHash, settledAt: observed.settledAt, sellAmount: observed.sellAmount, buyAmount: observed.buyAmount, route: observed.makers };
+          provenance = { source: "chain", tagVerified: observed.attribution.creditedToEnrollment };
+        }
         if (!s || !hash(s.txHash) || !timestamp(s.settledAt) || !amount(s.sellAmount) || !amount(s.buyAmount)) {
           return bad("Settlement needs txHash, settledAt and both amounts. They come from the fill you observed, not from the quote.");
         }
@@ -198,7 +264,7 @@ export async function handle(action: string, payload: any = {}, headers: Record<
         if (s.route !== undefined && !Array.isArray(s.route)) return bad("settlement.route must be a list.");
         const limit = payload.slippageBpsLimit ?? 100;
         if (typeof limit !== "number" || !Number.isFinite(limit) || limit < 0 || limit > 10_000) return bad("slippageBpsLimit must be between 0 and 10000.");
-        const receipt = makeReceipt({ quote: asQuote(payload.quote), settlement: s, slippageBpsLimit: limit }, signingKey());
+        const receipt = makeReceipt({ quote: asQuote(payload.quote), settlement: s, slippageBpsLimit: limit, provenance }, signingKey());
         const store = await journal();
         store.put(receipt);
         return { status: 201, body: { receipt, signatureValid: verifyReceipt(receipt), persistence: store.persistence } };

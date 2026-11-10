@@ -102,6 +102,10 @@ dl.read dd { margin: 0; font: 500 13px var(--mono); color: var(--ink); overflow-
 .hash { font: 400 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 
+.metrics { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: var(--gap-4); margin-bottom: var(--gap-4); }
+.metrics .read { margin: 0; }
+.metrics[hidden] { display: none; }
+
 .entry { display: grid; gap: var(--gap-1); padding: var(--gap-3) 0; border-top: 1px solid var(--line); }
 .entry:first-child { border-top: 0; padding-top: 0; }
 .entry b { font: 500 12px var(--mono); }

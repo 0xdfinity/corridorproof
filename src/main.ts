@@ -30,6 +30,10 @@ const TOKENS = {
 } as const;
 
 type Symbol = keyof typeof TOKENS;
+type Json = Record<string, unknown>;
+type Comparison = { verified: boolean; flags: string[]; slippageBps: number; slippageLimitBps: number; rateDeltaBps: number | null; expiryHonored: boolean; routeMatched: boolean };
+type Receipt = { id: string; createdAt: string; txHash: string; rfqId: string; comparison: Comparison; provenance: { source: string; tagVerified: boolean }; signature: { publicKey: string; payloadHash: string; algorithm: string; value: string } };
+
 const PAIRS: Array<[Symbol, Symbol]> = [
   ['cNGN', 'USDT'], ['USDT', 'cNGN'],
   ['USDC', 'USDT'], ['USDT', 'USDC'],
@@ -45,12 +49,6 @@ const PAIRS: Array<[Symbol, Symbol]> = [
   ['cNGN', 'GD'], ['GD', 'cNGN'],
 ];
 
-const label = (pair: [Symbol, Symbol]) => `${pair[0]} → ${pair[1]}`;
-
-type Json = Record<string, unknown>;
-type Comparison = { verified: boolean; flags: string[]; slippageBps: number; slippageLimitBps: number; rateDeltaBps: number | null; expiryHonored: boolean; routeMatched: boolean };
-type Receipt = { id: string; createdAt: string; txHash: string; rfqId: string; comparison: Comparison; signature: { publicKey: string; payloadHash: string; algorithm: string; value: string } };
-
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 type Field = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 const field = (id: string): Field => {
@@ -58,7 +56,6 @@ const field = (id: string): Field => {
   if (!node || !('value' in node)) throw new Error('Missing form field: ' + id);
   return node as Field;
 };
-
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string) => {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -100,13 +97,12 @@ function stamp(ok: boolean, label: string) {
   return s;
 }
 
-function externalLink(label: string, href: string) {
-  const a = el('a', label);
+function externalLink(text: string, href: string) {
+  const a = el('a', text);
   a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer';
   return a;
 }
 
-/** Whole tokens to base units, without float arithmetic. */
 function toBase(whole: string, decimals: number) {
   if (!/^\d+(\.\d+)?$/.test(whole)) return null;
   const [int, frac = ''] = whole.split('.');
@@ -123,6 +119,14 @@ function formatUnits(base: string, decimals: number) {
   return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${frac ? '.' + frac : ''}`;
 }
 
+/** rateRay is 1e27 fixed point; six significant digits keeps small cross-rates readable. */
+function rateFromRay(ray: string) {
+  if (!INTEGER.test(ray)) return ray;
+  const scaled = Number(BigInt(ray) / 10n ** 18n) / 1e9;
+  if (!Number.isFinite(scaled) || scaled === 0) return ray;
+  return scaled >= 0.001 ? scaled.toPrecision(6) : scaled.toExponential(4);
+}
+
 async function call<T = Json>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, body === undefined
     ? { headers: { accept: 'application/json' } }
@@ -134,10 +138,7 @@ async function call<T = Json>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 
-/**
- * Reads the amounts out of a Textile response. Preference order is explicit, because
- * an indicative preview and a firm quote nest their numbers differently.
- */
+/** Indicative previews nest under data; firm quotes nest under quote. Try both. */
 function quoteFields(source: Json) {
   const nest = (o: unknown): Json | null => {
     if (!o || typeof o !== 'object') return null;
@@ -150,13 +151,14 @@ function quoteFields(source: Json) {
     return null;
   };
   const leg = nest(source);
-  const expiresAt = leg && typeof leg.expiresAt === 'string' ? leg.expiresAt : undefined;
   const swap = (((source.transactions as Json | undefined)?.swap) as Json | undefined) ?? undefined;
   return {
     sell: leg?.sellAmount as string | undefined,
     buy: leg?.buyAmount as string | undefined,
     rateRay: leg?.rateRay as string | undefined,
-    expiresAt,
+    feeAmount: leg?.feeAmount as string | undefined,
+    available: leg?.availableSellAmount as string | undefined,
+    expiresAt: leg?.expiresAt as string | undefined,
     rfqId: typeof source.rfqId === 'string' ? source.rfqId : undefined,
     swap,
   };
@@ -168,22 +170,6 @@ function setChip(id: string, text: string, state: 'live' | 'off' | '') {
   if (state) chip.dataset.state = state; else delete chip.dataset.state;
 }
 
-let health: Json = {};
-let lastQuote: Json | null = null;
-
-async function loadHealth() {
-  try {
-    health = await call<Json>('/api/health');
-    setChip('s-network', `Celo ${String(health.chainId)}`, 'live');
-    setChip('s-rfq', health.rfq === 'enabled' ? 'firm quotes armed' : 'preview only', health.rfq === 'enabled' ? 'live' : '');
-    setChip('s-settle', health.settlement === 'enabled' ? 'wallet armed' : 'dry-run only', health.settlement === 'enabled' ? '' : 'off');
-    setChip('s-tag', String(health.attributionTag ?? '—'), health.attributionCredited ? 'live' : 'off');
-  } catch (e) {
-    setChip('s-network', 'service unreachable', 'off');
-    fail($('preview-out'), (e as Error).message);
-  }
-}
-
 const isoToLocalInput = (iso: string) => (Number.isNaN(Date.parse(iso)) ? '' : new Date(iso).toISOString().slice(0, 16));
 const localInputToIso = (value: string) => {
   const parsed = new Date(value);
@@ -191,25 +177,11 @@ const localInputToIso = (value: string) => {
 };
 const defaultExpiry = () => new Date(Date.now() + 20 * 60_000).toISOString().slice(0, 16);
 
-/** Fills the record panel from a quote so nobody retypes base-unit integers by hand. */
-function carryIntoLedger(quoted: { sell: string; buy: string; expiresAt?: string }, target: HTMLElement) {
-  field('q-out').value = quoted.sell;
-  field('q-in').value = quoted.buy;
-  field('q-exp').value = quoted.expiresAt ? isoToLocalInput(quoted.expiresAt) : defaultExpiry();
-  field('f-out').value = quoted.sell;
-  target.replaceChildren(stamp(true, 'CARRIED INTO STEP 3'));
-}
-
-/**
- * rateRay is an 1e27 fixed-point price. Rates here span four orders of magnitude,
- * so six significant digits are kept rather than a fixed number of decimals.
- */
-function rateFromRay(ray: string) {
-  if (!INTEGER.test(ray)) return ray;
-  const scaled = Number(BigInt(ray) / 10n ** 18n) / 1e9;
-  if (!Number.isFinite(scaled) || scaled === 0) return ray;
-  return scaled >= 0.001 ? scaled.toPrecision(6) : scaled.toExponential(4);
-}
+let midRay: string | null = null;
+let lastQuote: Json | null = null;
+// Hosted journals are per-instance, so receipts this tab issued are kept here and
+// merged into the journal view; otherwise a reload-balanced instance would hide them.
+const sessionReceipts: Receipt[] = [];
 
 function selectedPair(): [Symbol, Symbol] {
   return PAIRS[Number(field('p-corridor').value)] ?? PAIRS[0];
@@ -218,10 +190,38 @@ function selectedPair(): [Symbol, Symbol] {
 function populateCorridors() {
   const select = $('p-corridor') as HTMLSelectElement;
   PAIRS.forEach((pair, index) => {
-    const option = el('option', label(pair));
+    const option = el('option', `${pair[0]} → ${pair[1]}`);
     option.value = String(index);
     select.append(option);
   });
+}
+
+async function loadHealth() {
+  try {
+    const health = await call<Json>('/api/health');
+    setChip('s-network', `Celo ${String(health.chainId)}`, 'live');
+    setChip('s-rfq', health.rfq === 'enabled' ? 'firm quotes armed' : 'preview only', health.rfq === 'enabled' ? 'live' : '');
+    setChip('s-settle', health.settlement === 'armed' ? 'wallet armed' : 'not armed', health.settlement === 'armed' ? '' : 'off');
+    setChip('s-tag', String(health.attributionTag ?? '—'), health.attributionCredited ? 'live' : 'off');
+  } catch (e) {
+    setChip('s-network', 'service unreachable', 'off');
+    fail($('preview-out'), (e as Error).message);
+  }
+}
+
+function renderMetrics(receipts: Receipt[]) {
+  const verified = receipts.filter((r) => r.comparison.verified).length;
+  const chain = receipts.filter((r) => r.provenance?.source === 'chain').length;
+  const drift = receipts.map((r) => r.comparison.rateDeltaBps).filter((v): v is number => v !== null);
+  const mean = drift.length ? Math.round((drift.reduce((a, b) => a + b, 0) / drift.length) * 100) / 100 : null;
+  show($('metrics'), readout([
+    ['Receipts issued', String(receipts.length)],
+    ['Verified', String(verified)],
+    ['Flagged', String(receipts.length - verified)],
+    ['Amounts read from chain', `${chain} of ${receipts.length}`],
+    ['Mean rate drift', mean === null ? '—' : `${mean} bps`],
+    ['Slippage breaches', String(receipts.filter((r) => r.comparison.flags.includes('slippage-exceeded')).length)],
+  ]));
 }
 
 function wirePreview() {
@@ -238,25 +238,67 @@ function wirePreview() {
       try {
         const data = await call<Json>('/api/quote/preview', { chainId: CHAIN_ID, sellToken: sellToken.address, buyToken: buyToken.address, sellAmount });
         const found = quoteFields(data);
-        const available = typeof (data.data as Json | undefined)?.availableSellAmount === 'string'
-          ? formatUnits(String((data.data as Json).availableSellAmount), sellToken.decimals)
-          : '—';
+        if (!found.rateRay) {
+          const upstream = (data.data as Json | undefined)?.status;
+          return fail(slot, upstream === 'no_quote'
+            ? 'No makers are quoting this corridor right now. Choose another corridor and try again.'
+            : 'Textile answered without a rate, so there is nothing to price against.');
+        }
+        midRay = found.rateRay;
         show(slot,
           stamp(true, 'CORRIDOR LIVE'),
           readout([
-            ['Quoted rate', found.rateRay ? `${rateFromRay(found.rateRay)} ${buy} per ${sell}` : 'rate not returned'],
+            ['Quoted rate', `${rateFromRay(found.rateRay)} ${buy} per ${sell}`],
             ['You sell', `${formatUnits(sellAmount, sellToken.decimals)} ${sell}`],
-            ['You receive', found.buy ? formatUnits(found.buy, buyToken.decimals) + ' ' + buy : 'not returned'],
-            ['Network fee', typeof (data.data as Json | undefined)?.feeAmount === 'string' ? formatUnits(String((data.data as Json).feeAmount), buyToken.decimals) + ' ' + buy : 'not returned'],
-            ['Quoted depth', available === '—' ? '—' : `${available} ${sell} available at this price`],
+            ['You receive', found.buy ? `${formatUnits(found.buy, buyToken.decimals)} ${buy}` : 'not returned'],
+            ['Network fee', found.feeAmount ? `${formatUnits(found.feeAmount, buyToken.decimals)} ${buy}` : 'not returned'],
+            ['Quoted depth', found.available ? `${formatUnits(found.available, sellToken.decimals)} ${sell}` : 'not returned'],
           ]),
           el('p', 'Indicative pricing from Textile makers. A firm quote is what binds the number and the window.'),
         );
         if (found.sell && found.buy) {
-          const carry = el('button', 'Carry into step 3', 'ghost');
-          carry.addEventListener('click', () => carryIntoLedger({ sell: found.sell!, buy: found.buy!, expiresAt: found.expiresAt }, carry));
+          const carry = el('button', 'Carry into step 4', 'ghost');
+          carry.addEventListener('click', () => {
+            field('q-out').value = found.sell!;
+            field('q-in').value = found.buy!;
+            field('q-exp').value = found.expiresAt ? isoToLocalInput(found.expiresAt) : defaultExpiry();
+            $('pricing-out').hidden = false;
+            carry.replaceWith(stamp(true, 'CARRIED INTO STEP 4'));
+          });
           slot.append(el('div', undefined, 'row'), carry);
         }
+      } catch (e) { fail(slot, (e as Error).message); }
+    });
+  });
+}
+
+function wirePricing() {
+  $('pricing-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const slot = $('pricing-out');
+    if (!midRay) return fail(slot, 'Run step 1 first — the book is priced against the mid Textile just quoted.');
+    const mid = midRay;
+    const [sell] = selectedPair();
+    busy($('d-go') as HTMLButtonElement, 'Pricing…', async () => {
+      pending(slot);
+      try {
+        const result = await call<Json>('/api/pricing/quote', {
+          midRay,
+          size: field('d-size').value.trim() || '1',
+          spreadBps: Number(field('d-spread').value),
+          skewBpsPerFullScale: Number(field('d-skew').value),
+          inventoryBase: field('d-inventory-base').value.trim() || '0',
+          inventoryQuote: field('d-inventory-quote').value.trim() || '0',
+        });
+        const quotes = Array.isArray(result.quotes) ? result.quotes as Json[] : [];
+        const book = readout(quotes.map((q) => [
+          q.side === 'sell' ? 'Desk sells base at' : 'Desk buys base at',
+          `${rateFromRay(String(q.priceRay))}${q.accepted ? '' : ' (no capacity)'}`,
+        ]));
+        const traces = el('ul', undefined, 'checks');
+        for (const q of quotes) for (const line of (q.trace as string[]) ?? []) traces.append(el('li', `${q.side}: ${line}`, q.accepted ? 'pass' : 'fail'));
+        show(slot, stamp(quotes.every((q) => q.accepted), quotes.every((q) => q.accepted) ? 'BOOK QUOTED' : 'BOOK PARTIALLY QUOTED'), book, traces,
+          el('p', `Priced from a ${sell} mid of ${rateFromRay(mid)}. This book is not yet answering Textile RFQ solicitations — it shows the decision, not a live maker feed.`));
       } catch (e) { fail(slot, (e as Error).message); }
     });
   });
@@ -269,7 +311,6 @@ function wireFirm() {
     const taker = field('f-taker').value.trim();
     if (!ADDRESS.test(taker)) return fail(slot, 'The taker must be a wallet address that will sign the swap.');
     const [sell, buy] = selectedPair();
-    const sellToken = TOKENS[sell].address, buyToken = TOKENS[buy].address;
     const amount = toBase(field('p-amount').value.trim(), TOKENS[sell].decimals);
     if (!amount) return fail(slot, `Enter an amount above zero with at most ${TOKENS[sell].decimals} decimal places.`);
     const side = field('f-side').value;
@@ -277,7 +318,9 @@ function wireFirm() {
     busy($('f-go') as HTMLButtonElement, 'Requesting…', async () => {
       pending(slot);
       try {
-        const data = await call<Json>('/api/quote/firm', { chainId: CHAIN_ID, sellToken, buyToken, [side]: amount, taker });
+        const data = await call<Json>('/api/quote/firm', {
+          chainId: CHAIN_ID, sellToken: TOKENS[sell].address, buyToken: TOKENS[buy].address, [side]: amount, taker,
+        });
         lastQuote = data;
         const found = quoteFields(data);
         show(slot,
@@ -287,16 +330,21 @@ function wireFirm() {
             ['Quoted out', found.sell ?? '—'],
             ['Quoted in', found.buy ?? '—'],
             ['Binding until', found.expiresAt ?? '—'],
+            ['Settlement nonce', String(data.settleNonce ?? 'not returned')],
             ['Executable', found.swap?.to ? `calldata for ${String(found.swap.to).slice(0, 10)}…${String(found.swap.to).slice(-6)}` : 'no swap calldata returned'],
           ]),
         );
         const actions = el('div', undefined, 'row');
         if (found.sell && found.buy) {
-          const carry = el('button', 'Carry into step 3', 'ghost');
-          carry.addEventListener('click', () => carryIntoLedger({ sell: found.sell!, buy: found.buy!, expiresAt: found.expiresAt }, carry));
+          const carry = el('button', 'Carry into step 4', 'ghost');
+          carry.addEventListener('click', () => {
+            field('q-out').value = found.sell!; field('q-in').value = found.buy!;
+            field('q-exp').value = found.expiresAt ? isoToLocalInput(found.expiresAt) : defaultExpiry();
+            carry.replaceWith(stamp(true, 'CARRIED'));
+          });
           actions.append(carry);
         }
-        if (found.swap) {
+        if (data.settleNonce) {
           const envelope = el('button', 'Build settlement envelope', 'ghost');
           envelope.addEventListener('click', () => {
             const out = $('receipt-out');
@@ -309,7 +357,7 @@ function wireFirm() {
                   ['Value', String(dry.value ?? '0')],
                   ['Calldata', `${Math.max(0, calldata.length / 2 - 1)} bytes, ending with the attribution suffix`],
                   ['Suffix', calldata.slice(-70)],
-                  ['Broadcast', dry.mode === 'dry-run' ? 'not sent — this deployment holds no wallet key' : 'sent from the agent wallet'],
+                  ['Broadcast', dry.mode === 'dry-run' ? 'not sent — this deployment holds no wallet' : 'sent from the agent wallet'],
                 ]));
               } catch (e) { fail(out, (e as Error).message); }
             });
@@ -330,12 +378,15 @@ function receiptView(slot: HTMLElement, receipt: Receipt, signatureValid: boolea
   item(c.routeMatched, c.routeMatched ? 'Fill route matches the quoted route' : 'Fill route differs from the quoted route');
   item(c.slippageBps <= c.slippageLimitBps, `Adverse slippage ${c.slippageBps} bps against a ${c.slippageLimitBps} bps limit`);
   item(signatureValid, signatureValid ? 'Signature and payload hash check out' : 'Signature does not match this payload');
+  const chainSourced = receipt.provenance?.source === 'chain';
+  item(chainSourced, chainSourced ? 'Fill amounts read from chain logs' : 'Fill amounts recorded by hand');
 
   const nodes: Node[] = [
     stamp(c.verified && signatureValid, c.verified && signatureValid ? 'VERIFIED' : 'FLAGGED'),
     readout([
       ['Receipt', receipt.id],
       ['Transaction', receipt.txHash],
+      ['Amounts from', chainSourced ? 'chain transfer logs' : 'manual record'],
       ['Rate drift', c.rateDeltaBps === null ? '—' : `${c.rateDeltaBps} bps`],
       ['Flags', c.flags.length ? c.flags.join(', ') : 'none'],
       ['Payload hash', receipt.signature.payloadHash],
@@ -360,40 +411,65 @@ function receiptView(slot: HTMLElement, receipt: Receipt, signatureValid: boolea
   return show(slot, ...nodes);
 }
 
+function syncFillSource() {
+  const chain = field('s-mode').value === 'chain';
+  document.querySelectorAll<HTMLElement>('.chain-only').forEach((node) => { node.hidden = !chain; });
+  document.querySelectorAll<HTMLElement>('.declared-only').forEach((node) => { node.hidden = chain; });
+  $('taker-row').hidden = !chain;
+}
+
 function wireLedger() {
   field('q-exp').value = defaultExpiry();
   field('r-at').value = defaultExpiry();
-  $('receipt-form').addEventListener('submit', (event) => {
+  field('s-mode').addEventListener('change', syncFillSource);
+  syncFillSource();
+
+  $('ledger-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const slot = $('receipt-out');
-    const fields = {
-      qOut: field('q-out').value.trim(), qIn: field('q-in').value.trim(),
-      fOut: field('f-out').value.trim(), fIn: field('f-in').value.trim(),
-      tx: field('r-tx').value.trim(), limit: Number(field('r-limit').value),
-    };
-    for (const [name, value] of Object.entries({ 'quoted out': fields.qOut, 'quoted in': fields.qIn, 'filled out': fields.fOut, 'filled in': fields.fIn })) {
-      if (!INTEGER.test(value) || value === '0') return fail(slot, `${name} must be a whole number of base units greater than zero.`);
-    }
-    if (!HASH.test(fields.tx)) return fail(slot, 'Settlement hash is a 66-character transaction id.');
-    const expiresAt = localInputToIso(field('q-exp').value), settledAt = localInputToIso(field('r-at').value);
-    if (!expiresAt || !settledAt) return fail(slot, 'Give both the quote expiry and the settlement time.');
-    if (!Number.isFinite(fields.limit) || fields.limit < 0 || fields.limit > 10000) return fail(slot, 'Slippage limit is in basis points, between 0 and 10000.');
+    const chain = field('s-mode').value === 'chain';
+    const qOut = field('q-out').value.trim(), qIn = field('q-in').value.trim();
+    const expiresAt = localInputToIso(field('q-exp').value);
+    const tx = field('r-tx').value.trim();
+    const limit = Number(field('r-limit').value);
 
-    busy($('r-go') as HTMLButtonElement, 'Signing…', async () => {
+    if (!INTEGER.test(qOut) || !INTEGER.test(qIn) || qOut === '0' || qIn === '0') return fail(slot, 'Quoted out and quoted in must be whole base-unit amounts above zero. Run step 1 and carry them in.');
+    if (!expiresAt) return fail(slot, 'Give the quote expiry.');
+    if (!HASH.test(tx)) return fail(slot, 'Settlement hash is a 66-character transaction id.');
+    if (!Number.isFinite(limit) || limit < 0 || limit > 10000) return fail(slot, 'Slippage limit is in basis points, between 0 and 10000.');
+
+    const quoteBody = {
+      rfqId: lastQuote ? String(quoteFields(lastQuote).rfqId ?? 'recorded') : 'recorded',
+      status: 'recorded', chainId: CHAIN_ID,
+      quote: { sellAmount: qOut, buyAmount: qIn, expiresAt },
+    };
+
+    busy($('r-go') as HTMLButtonElement, chain ? 'Reading chain…' : 'Signing…', async () => {
       pending(slot);
       try {
-        const route = field('r-route').value.split(',').map((s) => s.trim()).filter(Boolean);
-        const body = {
-          quote: {
-            rfqId: lastQuote ? String(quoteFields(lastQuote).rfqId ?? 'recorded') : 'recorded',
-            status: 'recorded',
-            chainId: CHAIN_ID,
-            quote: { sellAmount: fields.qOut, buyAmount: fields.qIn, expiresAt, ...(route.length ? { orders: route.map((maker) => ({ maker })) } : {}) },
-          },
-          settlement: { txHash: fields.tx, settledAt, sellAmount: fields.fOut, buyAmount: fields.fIn, ...(route.length ? { route } : {}) },
-          slippageBpsLimit: fields.limit,
-        };
+        let body: Json;
+        if (chain) {
+          const taker = field('s-taker').value.trim();
+          if (!ADDRESS.test(taker)) throw new Error('The taker address is the wallet that received the fill.');
+          const [sell, buy] = selectedPair();
+          body = {
+            quote: quoteBody,
+            observe: { txHash: tx, taker, sellToken: TOKENS[sell].address, buyToken: TOKENS[buy].address },
+            slippageBpsLimit: limit,
+          };
+        } else {
+          const fOut = field('f-out-manual').value.trim(), fIn = field('f-in-manual').value.trim();
+          const settledAt = localInputToIso(field('r-at').value);
+          if (!INTEGER.test(fOut) || !INTEGER.test(fIn)) throw new Error('Filled out and filled in must be whole base-unit amounts.');
+          if (!settledAt) throw new Error('Give the settlement time.');
+          body = {
+            quote: quoteBody,
+            settlement: { txHash: tx, settledAt, sellAmount: fOut, buyAmount: fIn },
+            slippageBpsLimit: limit,
+          };
+        }
         const result = await call<{ receipt: Receipt; signatureValid: boolean; persistence: string }>('/api/receipts', body);
+        sessionReceipts.unshift(result.receipt);
         const hosted = result.persistence === 'jsonl';
         receiptView(slot, result.receipt, result.signatureValid, hosted
           ? 'Signed here and kept on this request instance only. Download it to keep the record; a self-hosted journal persists to SQLite.'
@@ -419,9 +495,10 @@ function wireTag() {
           stamp(Boolean(proof.creditedToEnrollment), codes.length ? `TAGGED: ${codes.join(', ')}` : 'NO ATTRIBUTION TAG'),
           readout([['Transaction', txHash], ['Schema', String(proof.schemaId ?? '—')], ['Enrollment code here', String(proof.configured ?? '—')]]),
           el('p', codes.length ? 'Read from the chain itself, not from this service’s records.' : 'This transaction carries no ERC-8021 suffix.'),
-          el('div', undefined, 'row'),
         );
-        slot.lastElementChild?.append(externalLink('Open on Celoscan', `https://celoscan.io/tx/${txHash}`));
+        const row = el('div', undefined, 'row');
+        row.append(externalLink('Open on Celoscan', `https://celoscan.io/tx/${txHash}`));
+        slot.append(row);
       } catch (e) { fail(slot, (e as Error).message); }
     });
   });
@@ -447,7 +524,7 @@ function wireVerify() {
   });
   $('v-load').addEventListener('click', () => {
     const entry = document.querySelector<HTMLElement>('#journal .entry');
-    if (!entry?.dataset.receipt) return fail($('verify-out'), 'Nothing issued in this journal yet. Issue a receipt in step 3 first.');
+    if (!entry?.dataset.receipt) return fail($('verify-out'), 'Nothing issued in this journal yet. Issue a receipt in step 4 first.');
     field('v-json').value = entry.dataset.receipt;
     ($('v-go') as HTMLButtonElement).click();
   });
@@ -457,17 +534,19 @@ async function loadJournal() {
   const slot = $('journal');
   try {
     const data = await call<{ receipts: Receipt[]; persistence: string }>('/api/receipts');
+    const receipts = [...sessionReceipts, ...data.receipts.filter((r) => !sessionReceipts.some((s) => s.id === r.id))];
+    renderMetrics(receipts);
     $('journal-note').textContent = data.persistence === 'jsonl'
       ? 'Receipts issued on this instance, newest first. Hosted instances keep them only while the container lives.'
       : 'Receipts in this deployment’s journal, newest first.';
-    if (!data.receipts.length) return show(slot, el('p', 'No receipts issued here yet. Step 3 produces the first one.', 'empty'));
-    slot.replaceChildren(...data.receipts.map((r) => {
+    if (!receipts.length) return show(slot, el('p', 'No receipts issued here yet. Step 4 produces the first one.', 'empty'));
+    slot.replaceChildren(...receipts.map((r) => {
       const row = el('div', undefined, 'entry');
       row.dataset.receipt = JSON.stringify(r);
       row.append(
         el('b', `${r.comparison.verified ? 'VERIFIED' : 'FLAGGED'} · ${r.id.slice(0, 8)}`),
         el('span', r.txHash),
-        el('span', new Date(r.createdAt).toISOString()),
+        el('span', `${r.provenance?.source === 'chain' ? 'chain-read' : 'hand-recorded'} · ${new Date(r.createdAt).toISOString()}`),
       );
       const open = el('button', 'Verify this one', 'ghost');
       open.addEventListener('click', () => {
@@ -487,6 +566,7 @@ async function loadJournal() {
 
 populateCorridors();
 wirePreview();
+wirePricing();
 wireFirm();
 wireLedger();
 wireTag();
