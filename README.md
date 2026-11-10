@@ -23,11 +23,7 @@ CorridorProof reads the quote, records the settlement you observed, and signs th
 
 Live product: https://corridorproof.vercel.app
 
-Choose a corridor and the desk reads an indicative price from Textile on Celo mainnet, then carries the quoted legs into the ledger.
-
-![Corridor desk returning a live Textile quote](docs/screenshots/corridor-live.png)
-
-Issue a fill and CorridorProof signs a receipt that compares it against the quote: rate drift, adverse slippage against your limit, expiry, route, and how the amounts were sourced.
+Choose a corridor and the desk reads an indicative price from Textile on Celo mainnet. Issue a fill and CorridorProof signs a receipt that compares it against the quote: rate drift, adverse slippage against your limit, expiry, route, and how the amounts were sourced.
 
 ![Signed receipt comparing quote to fill, with checks](docs/screenshots/receipt-verified.png)
 
@@ -39,6 +35,12 @@ The same flow runs at phone width.
 - Chain reads: `POST /api/settlement/observe` decodes the transfer logs of a fill; a receipt created with `observe` marks its amounts as chain-sourced.
 - Service reads: `GET /api/health` reports chain, attribution code, settlement mode, journal type and journal metrics.
 - Attribution: `POST /api/attribution/read` returns the ERC-8021 codes present on a Celo transaction hash.
+
+## Watch
+
+Thirty seconds, from live quote to signed receipt.
+
+[![CorridorProof product film](docs/watch-poster.png)](docs/corridorproof-promo.mp4)
 
 ## Tech stack
 
