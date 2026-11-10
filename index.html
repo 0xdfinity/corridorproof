@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CorridorProof — quote-versus-fill receipts for FX agents on Celo</title>
-<meta name="description" content="Live Textile FX pricing on Celo, a two-sided maker book with inventory skew, and Ed25519-signed quote-versus-fill receipts verified from chain data.">
+<title>CorridorProof — verifiable receipts for automated currency trades</title>
+<meta name="description" content="Turn a live currency quote and the real trade into one signed, verifiable receipt that shows the gap between what was promised and what happened. Built on Celo with Textile FX pricing.">
 <meta name="theme-color" content="#0b1016">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d141d'/%3E%3Cpath d='M16 5l8 3v7.5c0 4.6-3.3 8.4-8 9.5-4.7-1.1-8-4.9-8-9.5V8l8-3z' fill='none' stroke='%2337d99a' stroke-width='2'/%3E%3Cpath d='M11.5 16.5l3 3 6-6.5' fill='none' stroke='%2337d99a' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,19 +28,18 @@
 
 <main>
   <section class="lede">
-    <h1>An FX quote is a promise. This is the receipt.</h1>
-    <p>Pull a live Textile RFQ price on Celo, price your own two-sided book against it, record the fill from the chain rather
-      than from memory, and CorridorProof signs a portable receipt that compares quoted and settled: rate drift, adverse
-      slippage against your limit, maker route, and whether settlement landed inside the window. Verification is a public-key
-      operation, so nobody has to trust this site.</p>
-    <p class="howto">Start at step 1 and work down. Each step unlocks the next, and every figure you see is read live when you ask — nothing here is pre-computed.</p>
+    <h1>A price is a promise. This is the receipt.</h1>
+    <p>When software trades currencies on your behalf, you rarely see the price it actually got. CorridorProof turns a live
+      quote and the real trade into one signed receipt that anyone can verify — showing the gap between what was promised and
+      what happened. Checking the signature is a public-key operation, so you never have to trust the machine, or this site.</p>
+    <p class="howto">You don't need to be a trader. Pick two currencies and press Check price — each step unlocks the next, and every figure is read live when you ask, never pre-computed.</p>
   </section>
 
   <section id="corridor" class="panel">
-    <h2><span class="step">1</span>Check the corridor <span class="here">Start here</span></h2>
-    <p class="note">Corridors and contract addresses come from <a href="https://docs.textilecredit.com/protocol/address-book.html" rel="noopener noreferrer" target="_blank">the Textile FX address book</a> for chain 42220. Prices are read when you ask, never from a cached table.</p>
+    <h2><span class="step">1</span>Check a live price <span class="here">Start here</span></h2>
+    <p class="note">Choose any two currencies CorridorProof supports (from <a href="https://docs.textilecredit.com/protocol/address-book.html" rel="noopener noreferrer" target="_blank">Textile's address book</a> for Celo). The price is read live from Textile's market-makers the moment you ask — never from a cached table.</p>
     <form class="grid" id="preview-form">
-      <label class="grow">Corridor
+      <label class="grow">Currency pair
         <select id="p-corridor"></select>
       </label>
       <label>Amount
@@ -53,9 +52,9 @@
   </section>
 
   <section class="panel locked" id="step-pricing">
-    <h2><span class="step">2</span>Price your own book</h2>
-    <p class="locknote">Unlocks after step 1 — the book is priced against the live mid Textile just returned.</p>
-    <p class="note">A two-sided quote from the mid Textile just showed you: half-spread, then inventory skew, then exposure caps. Every step is printed so the number can be argued with.</p>
+    <h2><span class="step">2</span>Price both sides</h2>
+    <p class="locknote">Unlocks after step 1 — it uses the live price you just checked.</p>
+    <p class="note">The fields below are your assumptions, not fixed answers — change them and re-quote. CorridorProof shows the price a market-maker would offer on both sides, and prints every step so you can argue with the number.</p>
     <form class="grid" id="pricing-form">
       <label>Spread (bps)<input id="d-spread" inputmode="numeric" value="20" autocomplete="off"></label>
       <label>Skew (bps at full scale)<input id="d-skew" inputmode="numeric" value="10" autocomplete="off"></label>
