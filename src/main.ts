@@ -182,6 +182,22 @@ let lastQuote: Json | null = null;
 // Hosted journals are per-instance, so receipts this tab issued are kept here and
 // merged into the journal view; otherwise a reload-balanced instance would hide them.
 const sessionReceipts: Receipt[] = [];
+let rfqEnabled = false;
+
+/** One guided path: step 1 pulls a live price, which unlocks the steps that use it. */
+function unlock(id: string) { $(id).classList.remove('locked'); }
+function markDone(id: string) {
+  const panel = $(id);
+  panel.classList.add('done');
+  const step = panel.querySelector<HTMLElement>('.step');
+  if (step) step.textContent = '✓';
+}
+function afterCorridorChecked() {
+  markDone('corridor');
+  unlock('step-pricing');
+  unlock('step-ledger');
+  if (rfqEnabled) unlock('step-firm');
+}
 
 function selectedPair(): [Symbol, Symbol] {
   return PAIRS[Number(field('p-corridor').value)] ?? PAIRS[0];
@@ -199,6 +215,7 @@ function populateCorridors() {
 async function loadHealth() {
   try {
     const health = await call<Json>('/api/health');
+    rfqEnabled = health.rfq === 'enabled';
     setChip('s-network', `Celo ${String(health.chainId)}`, 'live');
     setChip('s-rfq', health.rfq === 'enabled' ? 'firm quotes armed' : 'preview only', health.rfq === 'enabled' ? 'live' : '');
     setChip('s-settle', health.settlement === 'armed' ? 'wallet armed' : 'not armed', health.settlement === 'armed' ? '' : 'off');
@@ -256,6 +273,7 @@ function wirePreview() {
           ]),
           el('p', 'Indicative pricing from Textile makers. A firm quote is what binds the number and the window.'),
         );
+        afterCorridorChecked();
         if (found.sell && found.buy) {
           const carry = el('button', 'Carry into step 4', 'ghost');
           carry.addEventListener('click', () => {
@@ -299,6 +317,7 @@ function wirePricing() {
         for (const q of quotes) for (const line of (q.trace as string[]) ?? []) traces.append(el('li', `${q.side}: ${line}`, q.accepted ? 'pass' : 'fail'));
         show(slot, stamp(quotes.every((q) => q.accepted), quotes.every((q) => q.accepted) ? 'BOOK QUOTED' : 'BOOK PARTIALLY QUOTED'), book, traces,
           el('p', `Priced from a ${sell} mid of ${rateFromRay(mid)}. This book is not yet answering Textile RFQ solicitations — it shows the decision, not a live maker feed.`));
+        markDone('step-pricing');
       } catch (e) { fail(slot, (e as Error).message); }
     });
   });
@@ -334,6 +353,7 @@ function wireFirm() {
             ['Executable', found.swap?.to ? `calldata for ${String(found.swap.to).slice(0, 10)}…${String(found.swap.to).slice(-6)}` : 'no swap calldata returned'],
           ]),
         );
+        markDone('step-firm');
         const actions = el('div', undefined, 'row');
         if (found.sell && found.buy) {
           const carry = el('button', 'Carry into step 4', 'ghost');
@@ -474,6 +494,7 @@ function wireLedger() {
         receiptView(slot, result.receipt, result.signatureValid, hosted
           ? 'Signed here and kept on this request instance only. Download it to keep the record; a self-hosted journal persists to SQLite.'
           : undefined);
+        markDone('step-ledger');
         void loadJournal();
       } catch (e) { fail(slot, (e as Error).message); }
     });

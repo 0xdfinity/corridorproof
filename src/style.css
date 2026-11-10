@@ -23,6 +23,10 @@
 
 body { margin: 0; background: var(--bg); line-height: 1.55; }
 
+/* The label display rule below otherwise beats the hidden attribute; this keeps
+   every hidden element truly hidden, including the chain/hand field sets. */
+[hidden] { display: none !important; }
+
 .skip { position: absolute; left: -9999px; }
 .skip:focus { left: var(--gap-4); top: var(--gap-4); z-index: 5; background: var(--accent); color: var(--accent-ink); padding: var(--gap-2) var(--gap-3); border-radius: var(--radius); }
 
@@ -49,6 +53,16 @@ main { width: min(920px, calc(100% - 2 * var(--gap-4))); margin: 0 auto; padding
 .panel h2 { display: flex; align-items: center; gap: var(--gap-3); font-size: 17px; font-weight: 600; letter-spacing: -0.015em; margin: 0; }
 .step { display: grid; place-items: center; width: 21px; height: 21px; flex: none; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--accent); font: 500 11px var(--mono); }
 .note { color: var(--faint); font-size: 13px; margin: var(--gap-2) 0 var(--gap-4); max-width: 66ch; }
+
+/* ---------- guided flow ---------- */
+.howto { color: var(--muted); font-size: 14px; margin: var(--gap-4) 0 0; max-width: 60ch; }
+.here { font: 500 10px var(--mono); letter-spacing: .06em; color: var(--accent-ink); background: var(--accent); padding: 3px 8px; border-radius: 20px; }
+.panel.locked .note, .panel.locked form, .panel.locked .slot { opacity: .4; }
+.panel.locked form { pointer-events: none; }
+.panel.locked .locknote { display: flex; }
+.locknote { display: none; align-items: center; gap: var(--gap-2); margin: var(--gap-2) 0 0; font: 500 11px var(--mono); color: var(--faint); }
+.locknote::before { content: '🔒'; font-size: 11px; }
+.panel.done .step { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--gap-3); align-items: end; }
 .grid .grow { grid-column: span 2; }

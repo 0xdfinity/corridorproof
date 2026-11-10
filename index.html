@@ -33,10 +33,11 @@
       than from memory, and CorridorProof signs a portable receipt that compares quoted and settled: rate drift, adverse
       slippage against your limit, maker route, and whether settlement landed inside the window. Verification is a public-key
       operation, so nobody has to trust this site.</p>
+    <p class="howto">Start at step 1 and work down. Each step unlocks the next, and every figure you see is read live when you ask — nothing here is pre-computed.</p>
   </section>
 
   <section id="corridor" class="panel">
-    <h2><span class="step">1</span>Check the corridor</h2>
+    <h2><span class="step">1</span>Check the corridor <span class="here">Start here</span></h2>
     <p class="note">Corridors and contract addresses come from <a href="https://docs.textilecredit.com/protocol/address-book.html" rel="noopener noreferrer" target="_blank">the Textile FX address book</a> for chain 42220. Prices are read when you ask, never from a cached table.</p>
     <form class="grid" id="preview-form">
       <label class="grow">Corridor
@@ -51,8 +52,9 @@
     <div class="slot" id="preview-out" hidden></div>
   </section>
 
-  <section class="panel">
+  <section class="panel locked" id="step-pricing">
     <h2><span class="step">2</span>Price your own book</h2>
+    <p class="locknote">Unlocks after step 1 — the book is priced against the live mid Textile just returned.</p>
     <p class="note">A two-sided quote from the mid Textile just showed you: half-spread, then inventory skew, then exposure caps. Every step is printed so the number can be argued with.</p>
     <form class="grid" id="pricing-form">
       <label>Spread (bps)<input id="d-spread" inputmode="numeric" value="20" autocomplete="off"></label>
@@ -65,8 +67,9 @@
     <div class="slot" id="pricing-out" hidden></div>
   </section>
 
-  <section class="panel">
+  <section class="panel locked" id="step-firm">
     <h2><span class="step">3</span>Lock a firm quote</h2>
+    <p class="locknote">Unlocks after step 1. Firm quotes need a Textile key; this deployment runs preview only, so use step 1's live price to carry amounts into step 4.</p>
     <p class="note">Firm quotes bind an amount, an expiry and executable calldata. This deployment holds no Textile key, so it reports what Textile answers instead of inventing a quote.</p>
     <form class="grid" id="firm-form">
       <label class="grow">Taker wallet
@@ -80,8 +83,9 @@
     <div class="slot" id="firm-out" hidden></div>
   </section>
 
-  <section class="panel">
+  <section class="panel locked" id="step-ledger">
     <h2><span class="step">4</span>Record what settled</h2>
+    <p class="locknote">Unlocks after step 1. Carry the quoted legs across, or paste a settlement hash and the desk reads the amounts from chain.</p>
     <p class="note">Reading from the chain pulls the transfer amounts out of the transaction logs and refuses anything that is not a corridor fill. Hand-recorded figures are signed as claims, and the receipt says which it is.</p>
     <form class="grid" id="ledger-form">
       <label class="grow">Fill source
